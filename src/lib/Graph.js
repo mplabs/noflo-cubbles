@@ -622,3 +622,99 @@ class Graph extends EventEmitter {
     this.checkTransactionEnd();
   }
 }
+
+function loadJSON (definition, callback, metadata) {
+  var graph, properties, def, split, processId, portId, id, priv;
+
+  metadata = metadata || {};
+
+  if ('string' === typeof definition) {
+    definition = JSON.parse(definition);
+  }
+
+  definition.properties = definition.properties || {};
+  definition.processes = definition.processes || {};
+  definition.connections = definition.connections || [];
+
+  graph = new Graph(definition.properties.name || false, {
+    caseSensitive: definition.caseSensitive || false
+  });
+
+  graph.startTransaction('loadJSON', metadata);
+
+  properties = {};
+
+  Object.keys(definition.properties).forEach(function(property) {
+    if ('name' === property) { return; }
+    properties[property] = definition.properties[property];
+  });
+  graph.setProperties(properties);
+
+  Object.keys(definition.processes).forEach(function(id) {
+    def = definition.processes[id];
+    def.metadata = def.metadata || {};
+    graph.addNode(id, def.component, def.metadata);
+  });
+
+  definition.connections.forEach(function(conn) {
+    metadata = conn.metadata || {};
+    if (undefined !== conn.data) {
+      if ('number' === typeof conn.tgt.index) {
+        graph.addInitialIndex(conn.data, conn.tgt.process, graph.getPortName(conn.tgt.port), conn.tgt.index, metadata);
+      } else {
+        graph.addInitial(conn.data, conn.tgt.process, graph.getPortName(conn.tgt.port), metadata);
+      }
+      return;
+    }
+
+    if ('number' === typeof conn.src.index || 'number' === typeof conn.tgt.index) {
+      graph.addEdgeIndex(conn.src.process, graph.getPortName(conn.src.index), conn.tgt.process, graph.getPortName(conn.tgt.port), metadata);
+      return;
+    }
+
+    graph.addEdge(conn.src.process, graph.getPortName(conn.src.port), conn.tgt.process, graph.getPortName(conn.tgt.port), metadata);
+  });
+
+  if (definition.exports && definition.exports.length) {
+    definition.exports.forEach(function(exported) {
+      if (exported['private']) {
+        split = exported['private'].split('.');
+        if (split.length !== 2) { return; }
+        processId = split[0];
+        portId = split[1];
+        for (id in definition.processes) {
+          if (graph.getPortName(id) === graph.getPortName(processId)) {
+            processId = id;
+          }
+        }
+      } else {
+        processId = exported.process;
+        portId = graph.getPortName(exported.port);
+      }
+      graph.addExport(exported['public'], processId, portId, exported.metadata);
+    });
+  }
+
+  if (definition.inports) {
+    Object.keys(definition.inports).forEach(function(pub) {
+      priv = definition.inports[pub];
+      graph.addInport(pub, priv.process, graph.getPortName(priv.port), priv.metadata);
+    });
+  }
+
+  if (definition.outports) {
+    Object.keys(definition.outports).forEach(function(pub) {
+      priv = definition.outports[pub];
+      graph.addOutport(pub, priv.process, graph.getPortName(priv.port), priv.metadata);
+    });
+  }
+
+  if (definition.groups) {
+    definition.groups.forEach(function(group) {
+      graph.addGroup(group.name, group.nodes, group.metadata || {});
+    });
+  }
+
+  graph.endTransaction('loadJSON');
+  return callback(null, graph);
+};
